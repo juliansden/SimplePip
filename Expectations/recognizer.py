@@ -11,15 +11,15 @@ class Parser():
         super(Parser, self).__init__()
         self.text = text
 
-    def match_parentheses(self, tokens, index):
-        if tokens[index] != '{':
-            raise "match parenthesis, start is not {"
+    def match_parentheses(self, tokens, index, open_p, close_p):
+        if tokens[index] != open_p:
+            raise "match parenthesis, start is not a bracket or parentheses"
         else:
             counting = 1
             for i in range(index + 1, len(tokens)):
-                if tokens[i] == '{':
+                if tokens[i] == open_p:
                     counting += 1
-                elif tokens[i] == '}':
+                elif tokens[i] == close_p:
                     counting -= 1
                     if counting == 0:
                         return index, i
@@ -28,18 +28,28 @@ class Parser():
     def parse_validator(self):
         tokens = self.text.split()
         blocks = []
+        paths = []
         for i in range(len(tokens)):
             if tokens[i] == '{':
-                blocks.append([self.match_parentheses(tokens,i)])
+                blocks.append([self.match_parentheses(tokens,i,'{','}')])
         for block in blocks:
             count = 0
-            current_block = tokens[block[0][0]:block[0][1]]
-            for keyword in KEYWORDS:
-                for token in current_block:
-                    if keyword in token:
-                        count += 1
-            if count == 1:
-                print(current_block)
+            current_block = tokens[block[0][0]:block[0][1]+1]
+            for i in range(0,len(current_block)):
+                path = []
+                if current_block[i] == 'thread':
+                    process_name = current_block[i+1]
+                    for j in range(i+2, len(current_block)):
+                        process_name += current_block[j]
+                        if ')' in current_block[j]:
+                            break
+                    for j in range(i,len(current_block)):
+                        if current_block[j] == '{':
+                            f,l = self.match_parentheses(current_block,j,'{','}')
+                            current_block.insert(f+1,process_name)
+                            paths.append(current_block[f:l+1])
+                            break
+        print(paths)
 
 class Recognizer():
     """docstring for Recognizer"""
