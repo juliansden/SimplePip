@@ -13,9 +13,21 @@ defmodule Lab4Test do
     base_config =
       Raft.new_configuration([:a, :b, :c], :a, 100_000, 100_001, 1000)
 
-    spawn(:b, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:c, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:a, fn -> Raft.become_leader(base_config) end)
+    spawn(:b, fn ->
+      {:ok, server} = Annotation.start_link(:b)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:c, fn ->
+      {:ok, server} = Annotation.start_link(:c)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:a, fn ->
+      {:ok, server} = Annotation.start_link(:a)
+      base_config = %{base_config | annotation: server}
+      Raft.become_leader(base_config)
+    end)
     caller = self()
 
     client =
@@ -85,9 +97,21 @@ defmodule Lab4Test do
     base_config =
       Raft.new_configuration([:a, :b, :c], :a, 10_000, 10_001, 1000)
 
-    spawn(:b, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:c, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:a, fn -> Raft.become_leader(base_config) end)
+    spawn(:b, fn ->
+      {:ok, server} = Annotation.start_link(:b)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:c, fn ->
+      {:ok, server} = Annotation.start_link(:c)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:a, fn ->
+      {:ok, server} = Annotation.start_link(:a)
+      base_config = %{base_config | annotation: server}
+      Raft.become_leader(base_config)
+    end)
 
     client =
       spawn(:client, fn ->
@@ -132,9 +156,21 @@ defmodule Lab4Test do
 
     base_config = Raft.new_configuration([:a, :b, :c], :a, 498, 501, 100)
 
-    spawn(:b, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:c, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:a, fn -> Raft.become_leader(base_config) end)
+    spawn(:b, fn ->
+      {:ok, server} = Annotation.start_link(:b)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:c, fn ->
+      {:ok, server} = Annotation.start_link(:c)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:a, fn ->
+      {:ok, server} = Annotation.start_link(:a)
+      base_config = %{base_config | annotation: server}
+      Raft.become_leader(base_config)
+    end)
 
     client =
       spawn(:client, fn ->
