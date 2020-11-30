@@ -78,9 +78,30 @@ def main():
         } 
     } 
     """
+    replicate_log = """
+    Validator ReplicateLog {
+        thread leader(*, 1) {
+            notice("request_from_client")
+            task("broadcast_entry") {
+                repeat 2 { send(follower) }
+            }
+            task("replicate_entry") {
+                recv(follower)
+            }
+            notice("send_back_to_client")
+            recv(follower)
+        }
 
-    parser = Parser(test)
-    parser.parse_validator()
+        thread follower(*, 2) {
+            recv(leader)
+            send(leader)
+        }
+    }
+    """
+    p2 = Parser(replicate_log)
+    p2.parse_validator()
+    # parser = Parser(test)
+    # parser.parse_validator()
 
     # y = 0
     # for x in test:
