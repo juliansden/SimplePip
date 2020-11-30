@@ -6,6 +6,8 @@ defmodule Lab3Test do
   import Kernel,
     except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2]
 
+  require Annotation
+
   test "Nothing crashes during startup and heartbeats" do
     Emulation.init()
     Emulation.append_fuzzers([Fuzzers.delay(2)])
@@ -13,9 +15,21 @@ defmodule Lab3Test do
     base_config =
       Raft.new_configuration([:a, :b, :c], :a, 100_000, 100_001, 1000)
 
-    spawn(:b, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:c, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:a, fn -> Raft.become_leader(base_config) end)
+    spawn(:b, fn ->
+      {:ok, server} = Annotation.start_link(:b)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:c, fn ->
+      {:ok, server} = Annotation.start_link(:c)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:a, fn ->
+      {:ok, server} = Annotation.start_link(:a)
+      base_config = %{base_config | annotation: server}
+      Raft.become_leader(base_config)
+    end)
 
     client =
       spawn(:client, fn ->
@@ -46,9 +60,21 @@ defmodule Lab3Test do
     base_config =
       Raft.new_configuration([:a, :b, :c], :a, 100_000, 100_001, 1000)
 
-    spawn(:b, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:c, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:a, fn -> Raft.become_leader(base_config) end)
+    spawn(:b, fn ->
+      {:ok, server} = Annotation.start_link(:b)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:c, fn ->
+      {:ok, server} = Annotation.start_link(:c)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:a, fn ->
+      {:ok, server} = Annotation.start_link(:a)
+      base_config = %{base_config | annotation: server}
+      Raft.become_leader(base_config)
+    end)
 
     client =
       spawn(:client, fn ->
@@ -78,9 +104,21 @@ defmodule Lab3Test do
     base_config =
       Raft.new_configuration([:a, :b, :c], :a, 100_000, 100_001, 1000)
 
-    spawn(:b, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:c, fn -> Raft.become_follower(Raft.make_follower(base_config)) end)
-    spawn(:a, fn -> Raft.become_leader(base_config) end)
+    spawn(:b, fn ->
+      {:ok, server} = Annotation.start_link(:b)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:c, fn ->
+      {:ok, server} = Annotation.start_link(:c)
+      base_config = %{base_config | annotation: server}
+      Raft.become_follower(Raft.make_follower(base_config))
+    end)
+    spawn(:a, fn ->
+      {:ok, server} = Annotation.start_link(:a)
+      base_config = %{base_config | annotation: server}
+      Raft.become_leader(base_config)
+    end)
 
     client =
       spawn(:client, fn ->

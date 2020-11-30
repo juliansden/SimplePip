@@ -10,6 +10,8 @@ defmodule Raft do
     except: [spawn: 3, spawn: 1, spawn_link: 1, spawn_link: 3, send: 2]
 
   require Fuzzers
+
+  require Annotation
   # This allows you to use Elixir's loggers
   # for messages. See
   # https://timber.io/blog/the-ultimate-guide-to-logging-in-elixir/
@@ -59,7 +61,9 @@ defmodule Raft do
     next_index: nil,
     match_index: nil,
     # The queue we are building using this RSM.
-    queue: nil
+    queue: nil,
+    sequence_number: nil,
+    annotation: nil
   )
 
   @doc """
@@ -96,7 +100,8 @@ defmodule Raft do
       is_leader: false,
       next_index: nil,
       match_index: nil,
-      queue: :queue.new()
+      queue: :queue.new(),
+      sequence_number: 0
     }
   end
 
@@ -161,7 +166,7 @@ defmodule Raft do
       # Note that entry indexes are all 1, which in
       # turn means that we expect commit indexes to
       # be 1 indexed. Now a list is a reversed log,
-      # so what we can do here is simple: 
+      # so what we can do here is simple:
       # Given 0-indexed index i, length(log) - 1 - i
       # is the ith list element. => length(log) - (i +1),
       # and hence length(log) - index is what we want.
@@ -177,7 +182,7 @@ defmodule Raft do
   @spec update_commit_index(%Raft{is_leader: true}) :: %Raft{is_leader: true}
   def update_commit_index(state) do
     possible_index = state.commit_index + 1
-    replicated_num = 
+    replicated_num =
       state.view
       |>  Enum.filter(fn pid -> pid != state.current_leader and Map.get(state.match_index, pid) >= possible_index end)
       |>  length()
@@ -200,6 +205,7 @@ defmodule Raft do
         {{requester, value}, state} ->
           if state.is_leader and get_log_entry(state, state.last_applied).term == state.current_term do
             send(requester, value)
+            Annotation.notice(state.annotation, "send_back_to_client")
           end
           apply_to_rsm(state)
         {:noentry, state} ->
@@ -341,8 +347,8 @@ defmodule Raft do
         }
   def make_follower(state) do
     %{
-      state 
-      | is_leader: false, 
+      state
+      | is_leader: false,
         next_index: nil,
         match_index: nil
     }
@@ -350,10 +356,10 @@ defmodule Raft do
 
   # update_leader: update the process state with the
   # current leader.
-  @spec update_leader(%Raft{}, atom()) :: %Raft{current_leader: atom()}
-  defp update_leader(state, who) do
-    %{state | current_leader: who}
-  end
+  # @spec update_leader(%Raft{}, atom()) :: %Raft{current_leader: atom()}
+  # defp update_leader(state, who) do
+  #   %{state | current_leader: who}
+  # end
 
   # Compute a random election timeout between
   # state.min_election_timeout and state.max_election_timeout.
@@ -380,6 +386,10 @@ defmodule Raft do
     %{state | heartbeat_timer: timer}
   end
 
+  defp update_sequence_number(state) do
+    %{state | sequence_number: state.sequence_number + 1}
+  end
+
   # Utility function to send a message to all
   # processes other than the caller. Should only be used by leader.
   @spec broadcast_to_others(%Raft{is_leader: true}, any()) :: [boolean()]
@@ -387,15 +397,18 @@ defmodule Raft do
     me = whoami()
     state.view
     |> Enum.filter(fn pid -> pid != me end)
-    |> Enum.map(fn pid -> send(pid, message) end)
+    |> Enum.map(fn pid ->
+      send(pid, message)
+      Annotation.send(state.annotation, pid)
+    end)
   end
 
   @doc """
   Send all the necessary entries to a certain server.
   Use after update next_index
   """
-  @spec send_entries(%Raft{is_leader: true}, atom() | pid()) :: boolean()
-  def send_entries(state, pid) do
+  @spec send_entries(%Raft{is_leader: true}, atom() | pid(), {atom() | pid(), non_neg_integer()}) :: boolean()
+  def send_entries(state, pid, id) do
     if state.is_leader == false or pid == state.current_leader or not Enum.member?(state.view, pid) do
       raise "Invalid call of send_entries: not leader calling or destination is not valid"
     end
@@ -406,30 +419,34 @@ defmodule Raft do
         :noentry -> 0
         entry -> entry.term
       end
-      message = 
+      message =
         Raft.AppendEntryRequest.new(
           state.current_term,
           state.current_leader,
           prev_index,
           prev_term,
           get_log_suffix(state, prev_index + 1),
-          state.commit_index
+          state.commit_index,
+          id
         )
       send(pid, message)
     else
-        true
+      false
     end
   end
 
-  @spec broadcast_entries_to_others(%Raft{is_leader: true}) :: [boolean()]
-  defp broadcast_entries_to_others(state) do
+  @spec broadcast_entries_to_others(%Raft{is_leader: true}, {atom() | pid(), non_neg_integer()}) :: [boolean()]
+  defp broadcast_entries_to_others(state, id) do
     me = whoami()
-    last_index = get_last_log_index(state)
 
     state.view
     |> Enum.filter(fn pid -> pid != me end)
-    |> Enum.map(fn pid -> 
-      send_entries(state, pid)
+    |> Enum.map(fn pid ->
+      if send_entries(state, pid, id) do
+        Annotation.send(state.annotation, pid)
+      else
+        false
+      end
     end)
   end
 
@@ -464,7 +481,7 @@ defmodule Raft do
   defp remove_timer(state) do
     if state.heartbeat_timer != nil do
       case Emulation.cancel_timer(state.heartbeat_timer) do
-        false -> 
+        false ->
           receive do
             :timer -> nil
           end
@@ -473,7 +490,7 @@ defmodule Raft do
     end
     if state.election_timer != nil do
       case Emulation.cancel_timer(state.election_timer) do
-        false -> 
+        false ->
           receive do
             :timer -> nil
           end
@@ -491,7 +508,7 @@ defmodule Raft do
   def become_follower(state) do
     # TODO: Do anything you need to when a process
     # transitions to a follower.
-    IO.puts("[#{state.current_term}: #{whoami()}]: becoming follower")
+    # IO.puts("[#{state.current_term}: #{whoami()}]: becoming follower")
     state = reset_election_timer(state)
     follower(make_follower(state), nil)
   end
@@ -517,15 +534,18 @@ defmodule Raft do
        %Raft.AppendEntryRequest{
          term: term,
          leader_id: leader_id,
-         prev_log_index: prev_log_index,
-         prev_log_term: prev_log_term,
+         prev_log_index: _prev_log_index,
+         prev_log_term: _prev_log_term,
          entries: [],
-         leader_commit_index: leader_commit_index
+         leader_commit_index: _leader_commit_index,
+         id: id
        }} ->
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Follower received empty message for term #{term} with leader #{leader_id} " <>
-            "(#{leader_commit_index})"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Follower received empty message for term #{term} with leader #{leader_id} " <>
+        #     "(#{leader_commit_index})"
+        # )
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         if term < state.current_term do
           follower(state, extra_state)
         else
@@ -541,25 +561,30 @@ defmodule Raft do
          prev_log_index: prev_log_index,
          prev_log_term: prev_log_term,
          entries: entries,
-         leader_commit_index: leader_commit_index
+         leader_commit_index: leader_commit_index,
+         id: id
        }} ->
         # TODO: Handle an AppendEntryRequest received by a
         # follower
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Follower received append entry for term #{term} with leader #{leader_id} " <>
-            "(#{leader_commit_index})"
-        )
-        
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Follower received append entry for term #{term} with leader #{leader_id} " <>
+        #     "(#{leader_commit_index})"
+        # )
+
         # step 1: if term < state.current_term
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         if term < state.current_term do
-          message = 
+          message =
             Raft.AppendEntryResponse.new(
               state.current_term,
               # not sure what to return here
               get_last_log_index(state),
-              false
+              false,
+              id
             )
           send(sender, message)
+          Annotation.send(state.annotation, sender)
           # not current leader, don't update election timer
           follower(state, extra_state)
         else
@@ -574,24 +599,28 @@ defmodule Raft do
             state = add_log_entries(state, entries)
             # step 5
             state = %{state | commit_index: max(state.commit_index, leader_commit_index)}
-            message = 
+            message =
               Raft.AppendEntryResponse.new(
                 state.current_term,
                 get_last_log_index(state),
-                true
+                true,
+                id
               )
             send(sender, message)
+            Annotation.send(state.annotation, sender)
             state = reset_election_timer(state)
             follower(state, extra_state)
           # step 2: if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
           else
-            message = 
+            message =
               Raft.AppendEntryResponse.new(
                 state.current_term,
                 get_last_log_index(state),
-                false
+                false,
+                id
               )
             send(sender, message)
+            Annotation.send(state.annotation, sender)
             state = reset_election_timer(state)
             follower(state, extra_state)
           end
@@ -599,18 +628,21 @@ defmodule Raft do
 
       {sender,
        %Raft.AppendEntryResponse{
-         term: term,
-         log_index: index,
-         success: succ
+         term: _term,
+         log_index: _index,
+         success: _succ,
+         id: id
        }} ->
         # TODO: Handle an AppendEntryResponse received by
         # a follower.
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Follower received append entry response from #{sender} #{term}," <>
-            " index #{index}, succcess #{inspect(succ)}"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Follower received append entry response from #{sender} #{term}," <>
+        #     " index #{index}, succcess #{inspect(succ)}"
+        # )
 
         # raise "Not yet implemented"
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         follower(state, extra_state)
 
       {sender,
@@ -618,22 +650,25 @@ defmodule Raft do
          term: term,
          candidate_id: candidate,
          last_log_index: last_log_index,
-         last_log_term: last_log_term
+         last_log_term: last_log_term,
+         id: id
        }} ->
         # TODO: Handle a RequestVote call received by a
         # follower.
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Follower received RequestVote " <>
-            "term = #{term}, candidate = #{candidate}"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Follower received RequestVote " <>
+        #     "term = #{term}, candidate = #{candidate}"
+        # )
         # voted_for denote who the follower voted in current term
         # Thus, if term is updated, voted_for should be update
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         state = if term > state.current_term do
           %{state | voted_for: nil}
         else
           state
         end
-        granted? = 
+        granted? =
           cond do
             state.current_term > term -> false
             state.voted_for != nil and state.voted_for != sender -> false
@@ -644,9 +679,11 @@ defmodule Raft do
         message =
           Raft.RequestVoteResponse.new(
             state.current_term,
-            granted?
+            granted?,
+            id
           )
         send(sender, message)
+        Annotation.send(state.annotation, sender)
         if granted? do
           state = %{state | voted_for: candidate, current_leader: candidate, current_term: term}
           state = reset_election_timer(state)
@@ -658,14 +695,17 @@ defmodule Raft do
 
       {sender,
        %Raft.RequestVoteResponse{
-         term: term,
-         granted: granted
+         term: _term,
+         granted: _granted,
+         id: id
        }} ->
         # TODO: Handle a RequestVoteResponse.
-        IO.puts(
-          "[#{state.current_term}: #{whoami}]: Follower received RequestVoteResponse " <>
-            "term = #{term}, granted = #{inspect(granted)}"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami}]: Follower received RequestVoteResponse " <>
+        #     "term = #{term}, granted = #{inspect(granted)}"
+        # )
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         follower(state, extra_state)
 
 
@@ -677,7 +717,7 @@ defmodule Raft do
         send(sender, {:redirect, state.current_leader})
         follower(state, extra_state)
 
-      {sender, {:enq, item}} ->
+      {sender, {:enq, _item}} ->
         # IO.puts("[#{state.current_term}: #{whoami()}]: Follower receives an enq from client")
         send(sender, {:redirect, state.current_leader})
         follower(state, extra_state)
@@ -725,18 +765,24 @@ defmodule Raft do
   def become_leader(state) do
     # TODO: Send out any one time messages that need to be sent,
     # you might need to update the call to leader too.
-    IO.puts("[#{state.current_term}: #{whoami()}]: becoming leader for term #{state.current_term}")
+    # IO.puts("[#{state.current_term}: #{whoami()}]: becoming leader for term #{state.current_term}")
     state = %{state | voted_for: nil, current_leader: whoami()}
-    message = 
+    id = %{pid: state.current_leader, seq: state.sequence_number}
+    Annotation.set_path_id(state.annotation, id)
+    Annotation.start_task(state.annotation, "heartbeat")
+    message =
       Raft.AppendEntryRequest.new(
         state.current_term,
         state.current_leader,
         get_last_log_index(state),
         get_last_log_term(state),
         [],
-        state.commit_index
+        state.commit_index,
+        id
       )
     broadcast_to_others(state, message)
+    Annotation.end_task(state.annotation, "heartbeat")
+    state = update_sequence_number(state)
     state = reset_heartbeat_timer(state)
     leader(make_leader(state), %{})
   end
@@ -745,7 +791,7 @@ defmodule Raft do
   @spec tell_clients_resend(%Raft{is_leader: true}) :: no_return()
   defp tell_clients_resend(state) do
     # if there's some entries can be commited, commit them and reply to the client
-    IO.puts("[#{state.current_term}: #{whoami()}]: Leader trying to tell clients to resend the outstanding requests")
+    # IO.puts("[#{state.current_term}: #{whoami()}]: Leader trying to tell clients to resend the outstanding requests")
     uncommitted = get_log_suffix(state, state.commit_index + 1)
     Enum.map(Enum.reverse(uncommitted), fn entry ->
       send(entry.requester, {:redirect, state.current_leader})
@@ -767,16 +813,23 @@ defmodule Raft do
       # Messages that are a part of Raft.
 
       :timer ->
-        message = 
+
+        id = %{pid: state.current_leader, seq: state.sequence_number}
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.start_task(state.annotation, "heartbeat")
+        message =
           Raft.AppendEntryRequest.new(
             state.current_term,
             state.current_leader,
             get_last_log_index(state),
             get_last_log_term(state),
             [],
-            state.commit_index
+            state.commit_index,
+            id
           )
+        state = update_sequence_number(state)
         broadcast_to_others(state, message)
+        Annotation.end_task(state.annotation, "heartbeat")
         state = save_heartbeat_timer(state, Emulation.timer(state.heartbeat_timeout))
         leader(state, extra_state)
 
@@ -784,23 +837,26 @@ defmodule Raft do
        %Raft.AppendEntryRequest{
          term: term,
          leader_id: leader_id,
-         prev_log_index: prev_log_index,
-         prev_log_term: prev_log_term,
+         prev_log_index: _prev_log_index,
+         prev_log_term: _prev_log_term,
          entries: entries,
-         leader_commit_index: leader_commit_index
+         leader_commit_index: _leader_commit_index,
+         id: id
        }} ->
         # TODO: Handle an AppendEntryRequest seen by the leader.
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Leader received append entry for term #{term} with leader #{
-            leader_id
-          } " <>
-            "(#{leader_commit_index})"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Leader received append entry for term #{term} with leader #{
+        #     leader_id
+        #   } " <>
+        #     "(#{leader_commit_index})"
+        # )
         # if a new leader is elected, it definitely broadcast an empty message
         # because we assume the message is received in order, the first one we received is an empty one
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         cond do
           term < state.current_term ->
-            IO.puts("[#{state.current_term}: #{whoami()}]: Leader receive a message from former leader #{sender}")
+            # IO.puts("[#{state.current_term}: #{whoami()}]: Leader receive a message from former leader #{sender}")
             # I suppose I have already send empty message to everyone, so I'm not gonna send it again for this previous leader
             leader(state, extra_state)
           term == state.current_term ->
@@ -818,14 +874,16 @@ defmodule Raft do
        %Raft.AppendEntryResponse{
          term: term,
          log_index: index,
-         success: succ
+         success: succ,
+         id: id
        }} ->
         # TODO: Handle an AppendEntryResposne received by the leader.
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Leader received append entry response #{term} from #{sender}, " <>
-            " index #{index}, succcess #{succ}"
-        )
-
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Leader received append entry response #{term} from #{sender}, " <>
+        #     " index #{index}, succcess #{succ}"
+        # )
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         if term < state.current_term do
           raise "What? Why don't you update your current term???"
         end
@@ -837,15 +895,16 @@ defmodule Raft do
           end
           # For a specific follower, The message is received by order.
           # Thus, I assume this max is actually unnecessary
-          state = %{state | 
+          state = %{state |
             match_index: Map.update!(state.match_index, sender, &(max(&1, index))),
-            next_index: Map.update!(state.next_index, sender, &(max(&1, index + 1)))} 
+            next_index: Map.update!(state.next_index, sender, &(max(&1, index + 1)))}
           # The leader has to calculate the number of successful respond
           if Map.has_key?(extra_state, index) do
             current_poll = List.delete(Map.get(extra_state, index), sender)
             # length(state.view) - length(current_poll) = num_of_replicated
             # num_of_replicated > length(current_poll) means majority of the servers has this entry
             if length(state.view) > 2 * length(current_poll) do
+              Annotation.end_task(state.annotation, "replicate_entry")
               extra_state = Map.drop(extra_state, [index])
               # only if we finish a poll, we need to update the commit index
               state = update_commit_index(state)
@@ -870,7 +929,8 @@ defmodule Raft do
             # max() is to make sure next_index.sender >= 1
             next_index = Map.update!(state.next_index, sender, &(max(min(&1 - 1, index), 1)))
             state = %{state | next_index: next_index}
-            send_entries(state, sender)
+            send_entries(state, sender, id)
+            Annotation.send(state.annotation, sender)
             leader(state, extra_state)
           end
         end
@@ -881,10 +941,13 @@ defmodule Raft do
          term: term,
          candidate_id: candidate,
          last_log_index: last_log_index,
-         last_log_term: last_log_term
+         last_log_term: last_log_term,
+         id: id
        }} ->
         # TODO: Handle a RequestVote call at the leader.
-        granted? = 
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
+        granted? =
           cond do
             state.current_term >= term -> false
             state.voted_for != nil and state.voted_for != sender -> false
@@ -892,16 +955,18 @@ defmodule Raft do
             get_last_log_index(state) == last_log_index and get_last_log_term(state) > last_log_term -> false
             true -> true
           end
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Leader received RequestVote " <>
-            "term = #{term}, candidate = #{candidate}, granted = #{granted?}"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Leader received RequestVote " <>
+        #     "term = #{term}, candidate = #{candidate}, granted = #{granted?}"
+        # )
         message =
           Raft.RequestVoteResponse.new(
             state.current_term,
-            granted?
+            granted?,
+            id
           )
         send(sender, message)
+        Annotation.send(state.annotation, sender)
         if term > state.current_term do
           state = if granted? do %{state | voted_for: sender} else state end
           state = %{state | current_leader: candidate, current_term: term}
@@ -913,15 +978,18 @@ defmodule Raft do
 
       {sender,
        %Raft.RequestVoteResponse{
-         term: term,
-         granted: granted
+         term: _term,
+         granted: _granted,
+         id: id
        }} ->
-        # TODO: Handle RequestVoteResponse at a leader.         
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Leader received RequestVoteResponse " <>
-            "term = #{term}, granted = #{inspect(granted)}"
-        )
+        # TODO: Handle RequestVoteResponse at a leader.
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Leader received RequestVoteResponse " <>
+        #     "term = #{term}, granted = #{inspect(granted)}"
+        # )
         # maybe just ignore these message?
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         leader(state, extra_state)
 
       # Messages from external clients. For all of what follows
@@ -932,17 +1000,26 @@ defmodule Raft do
         # TODO: entry is the log entry that you need to
         # append.
         # IO.puts("[#{state.current_term}: #{whoami()}]: Leader receives an nop from client")
+
+        id = %{pid: state.current_leader, seq: state.sequence_number}
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.notice(state.annotation, "request_from_client")
         entry =
           Raft.LogEntry.nop(
             get_last_log_index(state) + 1,
             state.current_term,
-            sender
+            sender,
+            id
           )
         state = add_log_entries(state, [entry])
-        new_poll = 
+        new_poll =
           state.view
             |> Enum.filter(fn pid -> pid != whoami() end)
-        broadcast_entries_to_others(state) 
+        Annotation.start_task(state.annotation, "broadcast_entry")
+        broadcast_entries_to_others(state, id)
+        Annotation.end_task(state.annotation, "broadcast_entry")
+        Annotation.start_task(state.annotation, "replicate_entry")
+        state = update_sequence_number(state)
         state = reset_heartbeat_timer(state)
         leader(state, Map.put(extra_state, entry.index, new_poll))
 
@@ -950,18 +1027,26 @@ defmodule Raft do
         # TODO: entry is the log entry that you need to
         # append.
         # IO.puts("[#{state.current_term}: #{whoami()}]: Leader receives an enq from client")
+        id = %{pid: state.current_leader, seq: state.sequence_number}
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.notice(state.annotation, "request_from_client")
         entry =
           Raft.LogEntry.enqueue(
             get_last_log_index(state) + 1,
             state.current_term,
             sender,
-            item
+            item,
+            id
           )
         state = add_log_entries(state, [entry])
-        new_poll = 
+        state = update_sequence_number(state)
+        new_poll =
           state.view
             |> Enum.filter(fn pid -> pid != whoami() end)
-        broadcast_entries_to_others(state) 
+        Annotation.start_task(state.annotation, "broadcast_entry")
+        broadcast_entries_to_others(state, id)
+        Annotation.end_task(state.annotation, "broadcast_entry")
+        Annotation.start_task(state.annotation, "replicate_entry")
         state = reset_heartbeat_timer(state)
         leader(state, Map.put(extra_state, entry.index, new_poll))
 
@@ -969,17 +1054,25 @@ defmodule Raft do
         # TODO: entry is the log entry that you need to
         # append.
         # IO.puts("[#{state.current_term}: #{whoami()}]: Leader receives an deq from client")
+        id = %{pid: state.current_leader, seq: state.sequence_number}
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.notice(state.annotation, "request_from_client")
         entry =
           Raft.LogEntry.dequeue(
             get_last_log_index(state) + 1,
             state.current_term,
-            sender
+            sender,
+            id
           )
         state = add_log_entries(state, [entry])
-        new_poll = 
+        state = update_sequence_number(state)
+        new_poll =
           state.view
             |> Enum.filter(fn pid -> pid != whoami() end)
-        broadcast_entries_to_others(state) 
+        Annotation.start_task(state.annotation, "broadcast_entry")
+        broadcast_entries_to_others(state, id)
+        Annotation.end_task(state.annotation, "broadcast_entry")
+        Annotation.start_task(state.annotation, "replicate_entry")
         state = reset_heartbeat_timer(state)
         leader(state, Map.put(extra_state, entry.index, new_poll))
 
@@ -1029,17 +1122,24 @@ defmodule Raft do
     # a server become candidate because timesout, so I have to set election timer to nil here
     state = %{state | election_timer: nil}
     state = %{state | is_leader: true, current_leader: me, current_term: state.current_term + 1, voted_for: me}
-    IO.puts("[#{state.current_term}: #{me}]: becoming a candidate, term #{state.current_term}")
-    message = 
+    # IO.puts("[#{state.current_term}: #{me}]: becoming a candidate, term #{state.current_term}")
+    id = %{pid: me, seq: state.sequence_number}
+    IO.inspect(id)
+    Annotation.set_path_id(state.annotation, id)
+    Annotation.start_task(state.annotation, "request_vote")
+    message =
       Raft.RequestVote.new(
         state.current_term,
         me,
         get_last_log_index(state),
-        get_last_log_term(state)
+        get_last_log_term(state),
+        id
       )
     broadcast_to_others(state, message)
+    Annotation.end_task(state.annotation, "request_vote")
+    state = update_sequence_number(state)
     state = reset_election_timer(state)
-    poll = 
+    poll =
       state.view
         |> Enum.filter(fn pid -> pid != whoami() end)
     candidate(state, poll)
@@ -1057,22 +1157,25 @@ defmodule Raft do
     receive do
       :timer ->
         # start new election
-        IO.puts("[#{state.current_term}: #{whoami()}]: Candidate timer off, start new election")
+        # IO.puts("[#{state.current_term}: #{whoami()}]: Candidate timer off, start new election")
         become_candidate(state)
       {sender,
        %Raft.AppendEntryRequest{
          term: term,
          leader_id: leader_id,
-         prev_log_index: prev_log_index,
-         prev_log_term: prev_log_term,
+         prev_log_index: _prev_log_index,
+         prev_log_term: _prev_log_term,
          entries: [],
-         leader_commit_index: leader_commit_index
+         leader_commit_index: _leader_commit_index,
+         id: id
        }} ->
         # new leader is probably elected
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Candidate received empty message for term #{term} with leader #{leader_id} " <>
-            "(#{leader_commit_index})"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Candidate received empty message for term #{term} with leader #{leader_id} " <>
+        #     "(#{leader_commit_index})"
+        # )
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         if term < state.current_term do
           candidate(state, extra_state)
         else
@@ -1083,18 +1186,21 @@ defmodule Raft do
       {sender,
        %Raft.AppendEntryRequest{
          term: term,
-         leader_id: leader_id,
-         prev_log_index: prev_log_index,
-         prev_log_term: prev_log_term,
-         entries: entries,
-         leader_commit_index: leader_commit_index
+         leader_id: _leader_id,
+         prev_log_index: _prev_log_index,
+         prev_log_term: _prev_log_term,
+         entries: _entries,
+         leader_commit_index: _leader_commit_index,
+         id: id
        }} ->
         # TODO: Handle an AppendEntryRequest as a candidate
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Candidate received append entry for term #{term} " <>
-            "with leader #{leader_id} " <>
-            "(#{leader_commit_index})"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Candidate received append entry for term #{term} " <>
+        #     "with leader #{leader_id} " <>
+        #     "(#{leader_commit_index})"
+        # )
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         if term < state.current_term do
           candidate(state, extra_state)
         else
@@ -1104,16 +1210,18 @@ defmodule Raft do
 
       {sender,
        %Raft.AppendEntryResponse{
-         term: term,
-         log_index: index,
-         success: succ
+         term: _term,
+         log_index: _index,
+         success: _succ,
+         id: id
        }} ->
         # TODO: Handle an append entry response as a candidate
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Candidate received append entry response #{term}," <>
-            " index #{index}, succcess #{succ}"
-        )
-
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Candidate received append entry response #{term}," <>
+        #     " index #{index}, succcess #{succ}"
+        # )
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         candidate(state, extra_state)
 
       {sender,
@@ -1121,15 +1229,17 @@ defmodule Raft do
          term: term,
          candidate_id: candidate,
          last_log_index: last_log_index,
-         last_log_term: last_log_term
+         last_log_term: last_log_term,
+         id: id
        }} ->
         # TODO: Handle a RequestVote response as a candidate.
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: received RequestVote " <>
-            "term = #{term}, candidate = #{candidate}"
-        )
-
-        granted? = 
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: received RequestVote " <>
+        #     "term = #{term}, candidate = #{candidate}"
+        # )
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
+        granted? =
           cond do
             # difference between follower: if term == current_term, can't vote
             state.current_term >= term -> false
@@ -1141,9 +1251,11 @@ defmodule Raft do
         message =
           Raft.RequestVoteResponse.new(
             state.current_term,
-            granted?
+            granted?,
+            id
           )
         send(sender, message)
+        Annotation.send(state.annotation, sender)
         if granted? do
           # term must be greater than current_term
           state = %{state | voted_for: candidate, current_term: term}
@@ -1155,25 +1267,32 @@ defmodule Raft do
       {sender,
        %Raft.RequestVoteResponse{
          term: term,
-         granted: granted
+         granted: granted,
+         id: id
        }} ->
         # TODO: Handle a RequestVoteResposne as a candidate.
-        IO.puts(
-          "[#{state.current_term}: #{whoami()}]: Candidate received RequestVoteResponse from #{sender} " <>
-            "term = #{term}, granted = #{inspect(granted)}"
-        )
+        # IO.puts(
+        #   "[#{state.current_term}: #{whoami()}]: Candidate received RequestVoteResponse from #{sender} " <>
+        #     "term = #{term}, granted = #{inspect(granted)}"
+        # )
+        Annotation.set_path_id(state.annotation, id)
+        Annotation.receive(state.annotation, sender)
         state = reset_election_timer(state)
         if granted do
           extra_state = List.delete(extra_state, sender)
           if length(state.view) > 2 * length(extra_state) do
-            IO.puts("[#{state.current_term}: #{whoami}]: elected as new leader for term #{state.current_term}")
+            # IO.puts("[#{state.current_term}: #{whoami}]: elected as new leader for term #{state.current_term}")
             # majority have voted
             become_leader(state)
           else
             candidate(state, extra_state)
           end
         else
-          candidate(state, extra_state)
+          if (term > state.current_term) do
+            become_follower(state)
+          else
+            candidate(state, extra_state)
+          end
         end
 
       # Messages from external clients.
@@ -1184,7 +1303,7 @@ defmodule Raft do
         send(sender, {:redirect, whoami()})
         candidate(state, extra_state)
 
-      {sender, {:enq, item}} ->
+      {sender, {:enq, _item}} ->
         # Redirect in hopes that the current process
         # eventually gets elected leader.
         # IO.puts("[#{state.current_term}: #{whoami()}]: Candidate receives an enq from client")

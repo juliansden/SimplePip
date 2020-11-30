@@ -1,0 +1,30 @@
+{
+    "a": [
+        {
+            "type": "task",
+            "name": "heartbeat",
+            "logs": [
+                {
+                    "type": "send",
+                    "receiver": "b"
+                },
+                {
+                    "type": "send",
+                    "receiver": "c"
+                }
+            ]
+        }
+    ],
+    "c": [
+        {
+            "type": "receive",
+            "sender": "a"
+        }
+    ],
+    "b": [
+        {
+            "type": "receive",
+            "sender": "a"
+        }
+    ]
+}

@@ -9,7 +9,8 @@ defmodule Raft.LogEntry do
     term: nil,
     operation: nil,
     requester: nil,
-    argument: nil
+    argument: nil,
+    id: nil
   )
 
   @doc """
@@ -24,61 +25,67 @@ defmodule Raft.LogEntry do
   @doc """
   Return a nop entry for the given index.
   """
-  @spec nop(non_neg_integer(), non_neg_integer(), atom()) :: %LogEntry{
+  @spec nop(non_neg_integer(), non_neg_integer(), atom(), {atom() | pid(), non_neg_integer()}) :: %LogEntry{
           index: non_neg_integer(),
           term: non_neg_integer(),
           requester: atom() | pid(),
           operation: :nop,
-          argument: none()
+          argument: none(),
+          id: {atom() | pid(), non_neg_integer()}
         }
-  def nop(index, term, requester) do
+  def nop(index, term, requester, id) do
     %LogEntry{
       index: index,
       term: term,
       requester: requester,
       operation: :nop,
-      argument: nil
+      argument: nil,
+      id: id
     }
   end
 
   @doc """
   Return a log entry for an `enqueue` operation.
   """
-  @spec enqueue(non_neg_integer(), non_neg_integer(), atom(), any()) ::
+  @spec enqueue(non_neg_integer(), non_neg_integer(), atom(), any(), {atom() | pid(), non_neg_integer()}) ::
           %LogEntry{
             index: non_neg_integer(),
             term: non_neg_integer(),
             requester: atom() | pid(),
             operation: :enq,
-            argument: any()
+            argument: any(),
+            id: {atom() | pid(), non_neg_integer()}
           }
-  def enqueue(index, term, requester, item) do
+  def enqueue(index, term, requester, item, id) do
     %LogEntry{
       index: index,
       term: term,
       requester: requester,
       operation: :enq,
-      argument: item
+      argument: item,
+      id: id
     }
   end
 
   @doc """
   Return a log entry for a `dequeue` operation.
   """
-  @spec dequeue(non_neg_integer(), non_neg_integer(), atom()) :: %LogEntry{
+  @spec dequeue(non_neg_integer(), non_neg_integer(), atom(), {atom() | pid(), non_neg_integer()}) :: %LogEntry{
           index: non_neg_integer(),
           term: non_neg_integer(),
           requester: atom() | pid(),
           operation: :enq,
-          argument: none()
+          argument: none(),
+          id: {atom() | pid(), non_neg_integer()}
         }
-  def dequeue(index, term, requester) do
+  def dequeue(index, term, requester, id) do
     %LogEntry{
       index: index,
       term: term,
       requester: requester,
       operation: :deq,
-      argument: nil
+      argument: nil,
+      id: id
     }
   end
 end
@@ -104,7 +111,8 @@ defmodule Raft.AppendEntryRequest do
     prev_log_index: nil,
     prev_log_term: nil,
     entries: nil,
-    leader_commit_index: nil
+    leader_commit_index: nil,
+    id: nil
   )
 
   @doc """
@@ -117,7 +125,8 @@ defmodule Raft.AppendEntryRequest do
           non_neg_integer(),
           non_neg_integer(),
           list(any()),
-          non_neg_integer()
+          non_neg_integer(),
+          {atom() | pid(), non_neg_integer()}
         ) ::
           %AppendEntryRequest{
             term: non_neg_integer(),
@@ -125,7 +134,8 @@ defmodule Raft.AppendEntryRequest do
             prev_log_index: non_neg_integer(),
             prev_log_term: non_neg_integer(),
             entries: list(any()),
-            leader_commit_index: non_neg_integer()
+            leader_commit_index: non_neg_integer(),
+            id: {atom() | pid(), non_neg_integer()}
           }
   def new(
         term,
@@ -133,7 +143,8 @@ defmodule Raft.AppendEntryRequest do
         prev_log_index,
         prev_log_term,
         entries,
-        leader_commit_index
+        leader_commit_index,
+        id
       ) do
     %AppendEntryRequest{
       term: term,
@@ -141,7 +152,8 @@ defmodule Raft.AppendEntryRequest do
       prev_log_index: prev_log_index,
       prev_log_term: prev_log_term,
       entries: entries,
-      leader_commit_index: leader_commit_index
+      leader_commit_index: leader_commit_index,
+      id: id
     }
   end
 end
@@ -156,23 +168,26 @@ defmodule Raft.AppendEntryResponse do
     term: nil,
     # used to relate request with response.
     log_index: nil,
-    success: nil
+    success: nil,
+    id: nil
   )
 
   @doc """
   Create a new AppendEntryResponse.
   """
-  @spec new(non_neg_integer(), non_neg_integer(), boolean()) ::
+  @spec new(non_neg_integer(), non_neg_integer(), boolean(), {atom() | pid(), non_neg_integer()}) ::
           %AppendEntryResponse{
             term: non_neg_integer(),
             log_index: non_neg_integer(),
-            success: boolean()
+            success: boolean(),
+            id: {atom() | pid(), non_neg_integer()}
           }
-  def new(term, prevIndex, success) do
+  def new(term, prevIndex, success, id) do
     %AppendEntryResponse{
       term: term,
       log_index: prevIndex,
-      success: success
+      success: success,
+      id: id
     }
   end
 end
@@ -187,25 +202,28 @@ defmodule Raft.RequestVote do
     term: nil,
     candidate_id: nil,
     last_log_index: nil,
-    last_log_term: nil
+    last_log_term: nil,
+    id: nil
   )
 
   @doc """
   Create a new RequestVote request.
   """
-  @spec new(non_neg_integer(), atom(), non_neg_integer(), non_neg_integer()) ::
+  @spec new(non_neg_integer(), atom(), non_neg_integer(), non_neg_integer(), {atom() | pid(), non_neg_integer()}) ::
           %RequestVote{
             term: non_neg_integer(),
             candidate_id: atom(),
             last_log_index: non_neg_integer(),
-            last_log_term: non_neg_integer()
+            last_log_term: non_neg_integer(),
+            id: {atom() | pid(), non_neg_integer()}
           }
-  def new(term, id, last_log_index, last_log_term) do
+  def new(term, pid, last_log_index, last_log_term, id) do
     %RequestVote{
       term: term,
-      candidate_id: id,
+      candidate_id: pid,
       last_log_index: last_log_index,
-      last_log_term: last_log_term
+      last_log_term: last_log_term,
+      id: id
     }
   end
 end
@@ -218,18 +236,20 @@ defmodule Raft.RequestVoteResponse do
   @enforce_keys [:term, :granted]
   defstruct(
     term: nil,
-    granted: nil
+    granted: nil,
+    id: nil
   )
 
   @doc """
   Create a new RequestVoteResponse.
   """
-  @spec new(non_neg_integer(), boolean()) ::
+  @spec new(non_neg_integer(), boolean(), {atom() | pid(), non_neg_integer()}) ::
           %RequestVoteResponse{
             term: non_neg_integer(),
-            granted: boolean()
+            granted: boolean(),
+            id: {atom() | pid(), non_neg_integer()}
           }
-  def new(term, granted) do
-    %RequestVoteResponse{term: term, granted: granted}
+  def new(term, granted, id) do
+    %RequestVoteResponse{term: term, granted: granted, id: id}
   end
 end

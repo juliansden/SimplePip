@@ -1,0 +1,11 @@
+{"type":"receive","sender":"a","id":{"seq":0,"pid":"a"}}
+{"type":"receive","sender":"a","id":{"seq":1,"pid":"a"}}
+{"type":"send","receiver":"a","id":{"seq":1,"pid":"a"}}
+{"type":"receive","sender":"a","id":{"seq":1,"pid":"a"}}
+{"type":"send","receiver":"a","id":{"seq":1,"pid":"a"}}
+{"type":"receive","sender":"a","id":{"seq":1,"pid":"a"}}
+{"type":"send","receiver":"a","id":{"seq":1,"pid":"a"}}
+{"type":"receive","sender":"a","id":{"seq":2,"pid":"a"}}
+{"type":"send","receiver":"a","id":{"seq":2,"pid":"a"}}
+{"type":"receive","sender":"a","id":{"seq":3,"pid":"a"}}
+{"type":"send","receiver":"a","id":{"seq":3,"pid":"a"}}

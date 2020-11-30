@@ -1,0 +1,30 @@
+validator ReplicateLog {
+    thread leader(*, 1) {
+        notice("request_from_client")
+        task("broadcast_entry") {
+            repeat 2 { send(follower) }
+        }
+        task("replicate_entry") {
+            any {
+                recv(follower)
+                send(follower)
+            }
+            recv(follower)
+        }
+        notice("send_back_to_client")
+        any {
+            recv(follower)
+            send(follower)
+        }
+        recv(follower)
+    }
+
+    thread follower(*, 2) {
+        any {
+            recv(leader)
+            send(leader)
+        }
+        recv(leader)
+        send(leader)
+    }
+}
