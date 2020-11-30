@@ -128,7 +128,16 @@ class Receive(Expectation):
 class Notice(Expectation):
     def __init__(self, tokens):
         assert next_token(tokens).string == '('
-        self.detail = re.compile(next_token(tokens).string[1:-1])
+        token = next_token(tokens)
+        if token.string == '/':
+            token = next_token(tokens)
+            regex = ''
+            while token and token.string != '/':
+                regex = regex + token.string
+                token = next_token(tokens)
+            self.detail = re.compile(regex)
+        else:
+            self.detail = re.compile(token.string[1:-1])
         assert next_token(tokens).string == ')' 
 
     def check(self, events):
@@ -139,17 +148,18 @@ class Notice(Expectation):
 
 class Repeat(Expectation):
     def __init__(self, tokens):
-        self.lo = int(next_token(tokens).string)
-        self.children = []
         token = next_token(tokens)
         if token.string == "between":
+            self.lo = int(next_token(tokens).string)
+            assert next_token(tokens).string == 'and'
             self.hi = int(next_token(tokens).string)
             if self.hi < self.lo:
-                raise 'repeat x between y, x should not be larger than y'
-            token = next_token(tokens)
+                raise 'repeat between x and y, x should not be larger than y'
         else:
+            self.lo = int(token.string)
             self.hi = self.lo
-        assert token.string == '{'
+        self.children = []
+        assert next_token(tokens).string == '{'
         token = next_token(tokens)
         while token and token.string != '}':
             self.children.append(dispatch[token.string](tokens))
@@ -182,21 +192,21 @@ class Maybe(Expectation):
             token = next_token(tokens) 
 
     def dfs(self, events, event_idx, child_index):
-        # If iterate through all events and all expectation
-        if child_index == len(self.children) and event_idx == len(events):
-            return True
-        # If there are still events or expectations left
-        if child_index == len(self.children) or event_idx == len(events):
-            return False
+        if child_index == len(self.children):
+            return event_idx
+        elif event_idx == len(events):
+            return None
         matched = self.children[child_index].check(events[event_idx:])
         for i in matched:
-            if self.dfs(events, event_idx + i, child_index + 1):
-                return True
-        return False
+            index = self.dfs(events, event_idx + i, child_index + 1)
+            if index:
+                return index
+        return None
 
     def check(self, events):
-        if self.dfs(events, 0, 0):
-            return [0, 1]
+        idx = self.dfs(events, 0, 0)
+        if idx:
+            return [0, idx]
         else:
             return [0]
 
@@ -235,12 +245,14 @@ dispatch = {"task": Task, "send": Send, "recv": Receive, "notice": Notice, "repe
 
 def main():
     with open('expectations_raft/replicate_log') as f:
+    # with open('pip_example') as f:
         tokens = tokenize.generate_tokens(f.readline)
         validators = []
         for token in tokens:
             if token.string == 'validator':
                 v = Validator(tokens)
                 validators.append(v)
+    # with open('pip_example_instance') as f:
     with open('path_instance_raft/a_1') as f:
         p = json.loads(f.read())
         for v in validators:
