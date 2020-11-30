@@ -1,0 +1,92 @@
+{
+    "a": [
+        {
+            "type": "notice",
+            "detail": "request_from_client"
+        },
+        {
+            "type": "task",
+            "name": "broadcast_entry",
+            "logs": [
+                {
+                    "type": "send",
+                    "receiver": "b"
+                },
+                {
+                    "type": "send",
+                    "receiver": "c"
+                }
+            ]
+        },
+        {
+            "type": "task",
+            "name": "replicate_entry",
+            "logs": [
+                {
+                    "type": "receive",
+                    "sender": "c"
+                },
+                {
+                    "type": "send",
+                    "receiver": "c"
+                },
+                {
+                    "type": "receive",
+                    "sender": "c"
+                },
+                {
+                    "type": "send",
+                    "receiver": "c"
+                },
+                {
+                    "type": "receive",
+                    "sender": "c"
+                }
+            ]
+        },
+        {
+            "type": "notice",
+            "detail": "send_back_to_client"
+        },
+        {
+            "type": "receive",
+            "sender": "b"
+        }
+    ],
+    "c": [
+        {
+            "type": "receive",
+            "sender": "a"
+        },
+        {
+            "type": "send",
+            "receiver": "a"
+        },
+        {
+            "type": "receive",
+            "sender": "a"
+        },
+        {
+            "type": "send",
+            "receiver": "a"
+        },
+        {
+            "type": "receive",
+            "sender": "a"
+        },
+        {
+            "type": "send",
+            "receiver": "a"
+        }
+    ],
+    "b": [
+        {
+            "type": "receive",
+            "sender": "a"
+        },
+        {
+            "type": "send",
+            "receiver": "a"
+        }
+    ]
+}

@@ -1,0 +1,12 @@
+validator Heartbeat {
+    thread leader(*,1) {
+        task("heartbeat") {
+            repeat 2 {
+                send(follower)
+            }
+        }
+    }
+    thread follower(*,2) {
+            recv(leader)
+    }
+}
