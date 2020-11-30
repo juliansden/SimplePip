@@ -56,11 +56,5 @@ def main():
         with open(os.path.join(sys.argv[2], path_id), 'w') as f:
             f.write(json.dumps(path_instance, indent=4))
 
-            
-                    
-                    
-
-
-
 if __name__ == "__main__":
     main()

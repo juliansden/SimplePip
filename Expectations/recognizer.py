@@ -1,6 +1,8 @@
 import tokenize
 import json
 import re
+import sys
+import os
 from abc import ABC, abstractmethod 
 
 # get next token except "\n"
@@ -244,22 +246,28 @@ class Any(Expectation):
 dispatch = {"task": Task, "send": Send, "recv": Receive, "notice": Notice, "repeat": Repeat, "maybe": Maybe, "xor": Xor, "any": Any}
 
 def main():
-    with open('expectations_raft/replicate_log') as f:
-    # with open('pip_example') as f:
-        tokens = tokenize.generate_tokens(f.readline)
-        validators = []
-        for token in tokens:
-            if token.string == 'validator':
-                v = Validator(tokens)
-                validators.append(v)
+    expectations = os.listdir(sys.argv[1])
+    validators = []
+    for expectation in expectations:
+        expectation = os.path.join(sys.argv[1], expectation)
+        with open(expectation) as f:
+        # with open('pip_example') as f:
+            tokens = tokenize.generate_tokens(f.readline)
+            for token in tokens:
+                if token.string == 'validator':
+                    v = Validator(tokens)
+                    validators.append(v)
     # with open('pip_example_instance') as f:
-    with open('path_instance_raft/a_1') as f:
-        p = json.loads(f.read())
-        for v in validators:
-            if v.check(p):
-                print(f'matches {v.name}')
-            else:
-                print(f'doesn\'t match {v.name}')
+    annotations = os.listdir(sys.argv[2])
+    for annotation in annotations:
+        annotation = os.path.join(sys.argv[2], annotation)
+        with open(annotation) as f:
+            p = json.loads(f.read())
+            for v in validators:
+                if v.check(p):
+                    print(f'matches {v.name}')
+                else:
+                    print(f'doesn\'t match {v.name}')
     return
 
 if __name__ == '__main__':
