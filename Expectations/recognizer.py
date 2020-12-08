@@ -27,7 +27,7 @@ class Validator(Expectation):
         token = next_token(tokens)
         while token and token.string != '}':
             # assert token.string == 'thread'clea
-            self.children.append(Thread(tokens))
+            self.children.append(Process(tokens))
             token = next_token(tokens)
 
     def check(self, path_instance):
@@ -35,14 +35,14 @@ class Validator(Expectation):
         for pid, events in path_instance.items():
             # TODO: this logic can be better
             match = False
-            for thread in self.children:
-                if thread.check(events):
-                    print(f'{pid} matches {thread.name}')
+            for process in self.children:
+                if process.check(events):
+                    # print(f'{pid} matches {process.name}')
                     match = True
             res = res and match
         return res
 
-class Thread(Expectation):
+class Process(Expectation):
     def __init__(self, tokens):
         self.name = next_token(tokens).string
         self.children = []
@@ -60,7 +60,7 @@ class Thread(Expectation):
     def dfs(self, events, event_idx, child_index):
         if child_index == len(self.children) and event_idx == len(events):
             return True
-        if child_index == len(self.children) or event_idx == len(events):
+        if child_index == len(self.children) and event_idx < len(events):
             return False
         matched = self.children[child_index].check(events[event_idx:])
         for i in matched:
@@ -89,7 +89,7 @@ class Task(Expectation):
         if child_index == len(self.children) and event_idx == len(events):
             return True
         # If there are still events or expectations left
-        if child_index == len(self.children) or event_idx == len(events):
+        if child_index == len(self.children) and event_idx < len(events):
             return False
         matched = self.children[child_index].check(events[event_idx:])
         for i in matched:
@@ -110,7 +110,7 @@ class Send(Expectation):
         assert next_token(tokens).string == ')'
 
     def check(self, events):
-        if events[0]['type'] == 'send':
+        if len(events) > 0 and events[0]['type'] == 'send':
             return [1]
         else:
             return []
@@ -122,7 +122,7 @@ class Receive(Expectation):
         assert next_token(tokens).string == ')' 
 
     def check(self, events):
-        if events[0]['type'] == 'receive':
+        if len(events) > 0 and events[0]['type'] == 'receive':
             return [1]
         else:
             return []
@@ -143,7 +143,7 @@ class Notice(Expectation):
         assert next_token(tokens).string == ')' 
 
     def check(self, events):
-        if events[0]['type'] == 'notice' and self.detail.match(events[0]['detail']):
+        if len(events) > 0 and events[0]['type'] == 'notice' and self.detail.match(events[0]['detail']):
             return [1] 
         else:
             return []
@@ -214,10 +214,40 @@ class Maybe(Expectation):
 
 class Xor(Expectation):
     def __init__(self, tokens):
-        pass
+        assert next_token(tokens).string == '{'
+        token = next_token(tokens)
+        self.children = []
+        while token and token.string != '}':
+            assert token.string == 'branch'
+            token = next_token(tokens)
+            assert token.string == ':'
+            token = next_token(tokens)
+            if token.string == '{':
+                token = next_token(tokens)
+                branch_list = []
+                while token.string != '}':
+                    branch_list.append(dispatch[token.string](tokens))
+                    token = next_token(tokens)
+                self.children.append(branch_list)
+            else:
+                self.children.append([dispatch[token.string](tokens)])
+            token = next_token(tokens)
+
+    def dfs(self, events, event_idx, branch, expectation_idx, result):
+        if expectation_idx == len(branch) and event_idx <= len(events):
+            result.append(event_idx)
+            return 
+        matched = branch[expectation_idx].check(events[event_idx:])
+        for i in matched:
+            self.dfs(events, event_idx + i, branch, expectation_idx + 1, result)
+        return  
 
     def check(self, events):
-        pass
+        result = []
+        for branch in self.children:
+            self.dfs(events, 0, branch, 0, result)
+        return result
+
 
 class Any(Expectation):
     def __init__(self, tokens):
@@ -260,14 +290,19 @@ def main():
     # with open('pip_example_instance') as f:
     annotations = os.listdir(sys.argv[2])
     for annotation in annotations:
-        annotation = os.path.join(sys.argv[2], annotation)
-        with open(annotation) as f:
+        path = os.path.join(sys.argv[2], annotation)
+        matched = False
+        with open(path) as f:
             p = json.loads(f.read())
+            # print(f'matching {annotation}')
             for v in validators:
                 if v.check(p):
-                    print(f'matches {v.name}')
-                else:
-                    print(f'doesn\'t match {v.name}')
+                    print(f'{annotation} matches {v.name}')
+                    matched = True
+                # else:
+                    # print(f'doesn\'t match {v.name}')
+        if not matched:
+            print(f'{annotation} doesn\'t match any expectation')
     return
 
 if __name__ == '__main__':

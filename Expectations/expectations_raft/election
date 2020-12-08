@@ -1,0 +1,29 @@
+validator Election {
+    thread candidate(*,1) {
+        notice("election timer out")
+        task ("request_vote") {
+            repeat 2 {
+                send(other)
+            }
+        }
+        xor {
+            branch: {
+                repeat 2 {
+                    recv(other)
+                }
+                maybe {
+                    notice("become leader")
+                }
+            }
+            branch: {
+                recv(other) 
+                notice("become leader")
+                recv(other)
+            }
+        }
+    }
+    thread other(*,2) {
+        recv(candidate)
+        send(candidate)
+    }
+}

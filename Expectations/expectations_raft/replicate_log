@@ -1,10 +1,8 @@
-validator ReplicateLog {
-    thread leader(*, 1) {
+validator AppendLogEntry {
+    process leader(*, 1) {
         notice("request_from_client")
-        task("broadcast_entry") {
-            repeat 2 { send(follower) }
-        }
         task("replicate_entry") {
+            repeat 2 { send(follower) }
             any {
                 recv(follower)
                 send(follower)
@@ -16,15 +14,15 @@ validator ReplicateLog {
             recv(follower)
             send(follower)
         }
-        recv(follower)
+        maybe {
+            recv(follower)
+        }
     }
 
-    thread follower(*, 2) {
+    process follower(*, 2) {
         any {
             recv(leader)
             send(leader)
         }
-        recv(leader)
-        send(leader)
     }
 }

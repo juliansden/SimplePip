@@ -794,6 +794,9 @@ defmodule Raft do
     # IO.puts("[#{state.current_term}: #{whoami()}]: Leader trying to tell clients to resend the outstanding requests")
     uncommitted = get_log_suffix(state, state.commit_index + 1)
     Enum.map(Enum.reverse(uncommitted), fn entry ->
+      Annotation.set_path_id(state.annotation, entry.id)
+      Annotation.notice(state.annotation, "No longer being leader")
+      Annotation.end_task(state.annotation, "replicate_entry")
       send(entry.requester, {:redirect, state.current_leader})
     end)
   end
@@ -1015,10 +1018,8 @@ defmodule Raft do
         new_poll =
           state.view
             |> Enum.filter(fn pid -> pid != whoami() end)
-        Annotation.start_task(state.annotation, "broadcast_entry")
-        broadcast_entries_to_others(state, id)
-        Annotation.end_task(state.annotation, "broadcast_entry")
         Annotation.start_task(state.annotation, "replicate_entry")
+        broadcast_entries_to_others(state, id)
         state = update_sequence_number(state)
         state = reset_heartbeat_timer(state)
         leader(state, Map.put(extra_state, entry.index, new_poll))
@@ -1043,10 +1044,8 @@ defmodule Raft do
         new_poll =
           state.view
             |> Enum.filter(fn pid -> pid != whoami() end)
-        Annotation.start_task(state.annotation, "broadcast_entry")
-        broadcast_entries_to_others(state, id)
-        Annotation.end_task(state.annotation, "broadcast_entry")
         Annotation.start_task(state.annotation, "replicate_entry")
+        broadcast_entries_to_others(state, id)
         state = reset_heartbeat_timer(state)
         leader(state, Map.put(extra_state, entry.index, new_poll))
 
@@ -1069,10 +1068,8 @@ defmodule Raft do
         new_poll =
           state.view
             |> Enum.filter(fn pid -> pid != whoami() end)
-        Annotation.start_task(state.annotation, "broadcast_entry")
-        broadcast_entries_to_others(state, id)
-        Annotation.end_task(state.annotation, "broadcast_entry")
         Annotation.start_task(state.annotation, "replicate_entry")
+        broadcast_entries_to_others(state, id)
         state = reset_heartbeat_timer(state)
         leader(state, Map.put(extra_state, entry.index, new_poll))
 
@@ -1126,6 +1123,7 @@ defmodule Raft do
     id = %{pid: me, seq: state.sequence_number}
     IO.inspect(id)
     Annotation.set_path_id(state.annotation, id)
+    Annotation.notice(state.annotation, "election timer out")
     Annotation.start_task(state.annotation, "request_vote")
     message =
       Raft.RequestVote.new(
@@ -1202,6 +1200,15 @@ defmodule Raft do
         Annotation.set_path_id(state.annotation, id)
         Annotation.receive(state.annotation, sender)
         if term < state.current_term do
+          message =
+            Raft.AppendEntryResponse.new(
+              state.current_term,
+              get_last_log_index(state),
+              false,
+              id
+            )
+          send(sender, message)
+          Annotation.send(state.annotation, sender)
           candidate(state, extra_state)
         else
           raise "Why this leader #{sender} doesn't broadcast empty message to all after elected?"
@@ -1283,6 +1290,7 @@ defmodule Raft do
           if length(state.view) > 2 * length(extra_state) do
             # IO.puts("[#{state.current_term}: #{whoami}]: elected as new leader for term #{state.current_term}")
             # majority have voted
+            Annotation.notice(state.annotation, "become leader")
             become_leader(state)
           else
             candidate(state, extra_state)
